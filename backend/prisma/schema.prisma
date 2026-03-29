@@ -1,0 +1,138 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── COMPANY ────────────────────────────────────────────────────────────────
+
+model Company {
+  id             String   @id @default(cuid())
+  name           String
+  country        String
+  currencyCode   String
+  currencySymbol String
+  createdAt      DateTime @default(now())
+
+  users         User[]
+  expenses      Expense[]
+  approvalFlows ApprovalFlow[]
+}
+
+// ─── USER ────────────────────────────────────────────────────────────────────
+
+model User {
+  id                String   @id @default(cuid())
+  companyId         String
+  name              String
+  email             String   @unique
+  password          String
+  role              String   @default("EMPLOYEE") // ADMIN | MANAGER | EMPLOYEE
+  managerId         String?
+  isManagerApprover Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  company  Company @relation(fields: [companyId], references: [id])
+  manager  User?   @relation("ManagerEmployee", fields: [managerId], references: [id])
+  employees User[] @relation("ManagerEmployee")
+
+  expenses        Expense[]        @relation("SubmittedBy")
+  approvalActions ApprovalAction[]
+  stepApprovers   StepApprover[]
+  keyApproverSteps ApprovalFlowStep[] @relation("StepKeyApprover")
+}
+
+// ─── EXPENSE ─────────────────────────────────────────────────────────────────
+
+model Expense {
+  id               String    @id @default(cuid())
+  companyId        String
+  submittedById    String
+  amount           Float
+  currencyCode     String
+  convertedAmount  Float?
+  category         String
+  description      String
+  expenseDate      DateTime
+  receiptUrl       String?
+  status           String    @default("DRAFT") // DRAFT | PENDING | APPROVED | REJECTED
+  currentStepIndex Int       @default(0)
+  activeFlowId     String?
+  isApproximateRate Boolean  @default(false)
+  managerApproved  Boolean?  // null = not required, true = approved, false = rejected
+
+  company         Company       @relation(fields: [companyId], references: [id])
+  submittedBy     User          @relation("SubmittedBy", fields: [submittedById], references: [id])
+  approvalActions ApprovalAction[]
+  activeFlow      ApprovalFlow? @relation(fields: [activeFlowId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── APPROVAL FLOW ───────────────────────────────────────────────────────────
+
+model ApprovalFlow {
+  id          String   @id @default(cuid())
+  companyId   String
+  name        String
+  description String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  company  Company            @relation(fields: [companyId], references: [id])
+  steps    ApprovalFlowStep[]
+  expenses Expense[]
+}
+
+model ApprovalFlowStep {
+  id                  String  @id @default(cuid())
+  flowId              String
+  stepIndex           Int
+  label               String
+  ruleType            String  @default("ALL") // ALL | PERCENTAGE | SPECIFIC | HYBRID
+  percentageThreshold Float?
+  keyApproverId       String?
+
+  flow          ApprovalFlow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  stepApprovers StepApprover[]
+  keyApprover   User?            @relation("StepKeyApprover", fields: [keyApproverId], references: [id])
+  actions       ApprovalAction[]
+
+  @@unique([flowId, stepIndex])
+}
+
+// Junction: which users are assigned to a given step
+model StepApprover {
+  id     String @id @default(cuid())
+  stepId String
+  userId String
+
+  step ApprovalFlowStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  user User             @relation(fields: [userId], references: [id])
+
+  @@unique([stepId, userId])
+}
+
+// ─── APPROVAL ACTION ─────────────────────────────────────────────────────────
+
+model ApprovalAction {
+  id        String   @id @default(cuid())
+  expenseId String
+  stepId    String?  // null = manager gate action
+  actorId   String
+  action    String   // APPROVED | REJECTED
+  comment   String?
+  isManagerGate Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  expense Expense           @relation(fields: [expenseId], references: [id])
+  step    ApprovalFlowStep? @relation(fields: [stepId], references: [id])
+  actor   User              @relation(fields: [actorId], references: [id])
+}
